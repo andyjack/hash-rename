@@ -1,0 +1,56 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use autodie 'open';
+use feature 'say';
+use experimental 'signatures', 'postderef';
+use Digest::SHA1;
+use List::SomeUtils 'any';
+use Path::Class 'file';
+use Path::Class::Rule;
+
+die "specify two dirs" unless $ARGV[0] && -d $ARGV[0] && $ARGV[1] && -d $ARGV[1];
+$|=1;
+my $src = find_and_hash_dir($ARGV[0]);
+my $dst = find_and_hash_dir($ARGV[1]);
+
+for my $dst_sha ( keys %$dst ) {
+    if ( exists $src->{$dst_sha} ) {
+        my $new_dst = file( $dst->{$dst_sha}->dir, $src->{$dst_sha}->basename );
+        if ( any { $_ eq $new_dst } grep { $_ ne $dst->{$dst_sha} } values %$dst ) {
+            die "$new_dst already in $dst->{$dst_sha}->dir, died";
+        }
+        if ( -f $new_dst ) {
+            die "$new_dst exists, died";
+        }
+        say "renaming $dst->{$dst_sha} to $new_dst";
+        $dst->{$dst_sha}->move_to($new_dst) or die "failed to move $dst->{$dst_sha} to $new_dst: $!";
+    }
+}
+
+sub find_and_hash_dir ($dir) {
+    my $rule = Path::Class::Rule->new;
+    print "hashing $dir:";
+    $rule->file;
+    $rule->max_depth(1);
+    my $next = $rule->iter($dir);
+    my %ret;
+    while ( my $file = $next->() ) {
+        print ".";
+        open my $fh, '<', $file;
+        my $sha1 = Digest::SHA1->new;
+        $sha1->addfile($fh);
+        push $ret{ $sha1->hexdigest }->@*, $file;
+    }
+    for my $sha1 ( keys %ret ) {
+        die 'found multiple files with same hash: ' . join( " ", $ret{$sha1}->@* ) if scalar $ret{$sha1}->@* > 1;
+    }
+
+    # flatten out ret
+    for my $sha1 ( keys %ret ) {
+        $ret{$sha1} = $ret{$sha1}[0];
+    }
+    say "done!";
+    return \%ret;
+}
